@@ -116,6 +116,7 @@ private:
 	struct {
 		param_t	w_acc;
 		param_t	w_mag;
+		param_t	w_ext_hdg;
 		param_t	w_gyro_bias;
 		param_t	mag_decl;
 		param_t	mag_decl_auto;
@@ -125,6 +126,7 @@ private:
 
 	float		_w_accel = 0.0f;
 	float		_w_mag = 0.0f;
+	float		_w_ext_hdg = 0.0f;
 	float		_w_gyro_bias = 0.0f;
 	float		_mag_decl = 0.0f;
 	bool		_mag_decl_auto = false;
@@ -134,6 +136,12 @@ private:
 	Vector<3>	_gyro;
 	Vector<3>	_accel;
 	Vector<3>	_mag;
+	
+	vision_position_estimate_s _vision = {};
+	Vector<3>	_vision_hdg;
+
+	att_pos_mocap_s _mocap = {};
+	Vector<3>	_mocap_hdg;
 
 	Quaternion	_q;
 	Vector<3>	_rates;
@@ -163,6 +171,7 @@ private:
 AttitudeEstimatorQ::AttitudeEstimatorQ() {
 	_params_handles.w_acc		= param_find("ATT_W_ACC");
 	_params_handles.w_mag		= param_find("ATT_W_MAG");
+	_params_handles.w_ext_hdg	= param_find("ATT_W_EXT_HDG");
 	_params_handles.w_gyro_bias	= param_find("ATT_W_GYRO_BIAS");
 	_params_handles.mag_decl	= param_find("ATT_MAG_DECL");
 	_params_handles.mag_decl_auto	= param_find("ATT_MAG_DECL_A");
@@ -222,6 +231,10 @@ void AttitudeEstimatorQ::task_main_trampoline(int argc, char *argv[]) {
 void AttitudeEstimatorQ::task_main() {
 
 	_sensors_sub = orb_subscribe(ORB_ID(sensor_combined));
+
+	_vision_sub = orb_subscribe(ORB_ID(vision_position_estimate));
+	_mocap_sub = orb_subscribe(ORB_ID(att_pos_mocap));
+
 	_params_sub = orb_subscribe(ORB_ID(parameter_update));
 	_global_pos_sub = orb_subscribe(ORB_ID(vehicle_global_position));
 
@@ -255,6 +268,38 @@ void AttitudeEstimatorQ::task_main() {
 			_mag.set(sensors.magnetometer_ga);
 
 			_data_good = true;
+		}
+
+		// Update vision and motion capture heading
+		bool vision_updated = false;
+		orb_check(vision_sub, &vision_updated);
+
+		bool mocap_updated = false;
+		orb_check(mocap_sub, &mocap_updated);
+
+		if (vision_updated) {
+			orb_copy(ORB_ID(vision_position_estimate), vision_sub, &vision);
+			math::Quaternion q(vision.q);
+			
+			math::Matrix<3, 3> Rvis = q.to_dcm();
+			math::Vector<3> v(1.0f, 0.0f, 0.4f);
+
+			_vision_hdg = Rvis.transposed() * v; 	// Rvis is Rwr (robot respect to world) while v is respect to world. 
+								// Hence Rvis must be transposed having (Rwr)' * Vw
+								// Rrw * Vw = vn. This way we have consistency
+						
+		}
+
+		if (mocap_updated) {
+			orb_copy(ORB_ID(att_pos_mocap), mocap_sub, &mocap);
+			math::Quaternion q(mocap.q);
+			math::Matrix<3, 3> Rmoc = q.to_dcm();
+
+			math::Vector<3> v(1.0f, 0.0f, 0.4f);
+
+			_mocap_hdg = Rmoc.transposed() * v; 	// Rmoc is Rwr (robot respect to world) while v is respect to world.
+								// Hence Rmoc must be transposed having (Rwr)' * Vw
+								// Rrw * Vw = vn. This way we have consistency
 		}
 
 		bool gpos_updated;
