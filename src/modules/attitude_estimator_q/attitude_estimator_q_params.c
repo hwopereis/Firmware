@@ -60,6 +60,15 @@ PARAM_DEFINE_FLOAT(ATT_W_ACC, 0.2f);
 PARAM_DEFINE_FLOAT(ATT_W_MAG, 0.1f);
 
 /**
+ * Complimentary filter external heading weight
+ *
+ * @group Attitude Q estimator
+ * @min 0
+ * @max 1
+ */
+PARAM_DEFINE_FLOAT(ATT_W_EXT_HDG, 0.1f);
+
+/**
  * Complimentary filter gyroscope bias weight
  *
  * @group Attitude Q estimator
@@ -88,6 +97,17 @@ PARAM_DEFINE_FLOAT(ATT_MAG_DECL, 0.0f);
  * @max 1
  */
 PARAM_DEFINE_INT32(ATT_MAG_DECL_A, 1);
+
+/**
+ * External heading usage mode (from Mocap/Vision)
+ * Set to 1 to just use external yaw.
+ * Set to 2 to use magnetometer as well and have a valid global yaw.
+ *
+ * @group Attitude Q estimator
+ * @min 0
+ * @max 2
+ */
+PARAM_DEFINE_INT32(ATT_EXT_HDG_M, 0);
 
 /**
  * Enable acceleration compensation based on GPS

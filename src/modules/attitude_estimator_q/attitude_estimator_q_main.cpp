@@ -56,6 +56,8 @@
 #include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/vehicle_control_mode.h>
 #include <uORB/topics/vehicle_global_position.h>
+#include <uORB/topics/vision_position_estimate.h>
+#include <uORB/topics/att_pos_mocap.h>
 #include <uORB/topics/parameter_update.h>
 #include <drivers/drv_hrt.h>
 
@@ -110,6 +112,8 @@ private:
 
 	int		_sensors_sub = -1;
 	int		_params_sub = -1;
+	int		_vision_sub = -1;
+	int		_mocap_sub = -1;
 	int		_global_pos_sub = -1;
 	orb_advert_t	_att_pub = nullptr;
 
@@ -122,6 +126,7 @@ private:
 		param_t	mag_decl_auto;
 		param_t	acc_comp;
 		param_t	bias_max;
+		param_t	ext_hdg_mode;
 	}		_params_handles;		/**< handles for interesting parameters */
 
 	float		_w_accel = 0.0f;
@@ -132,6 +137,7 @@ private:
 	bool		_mag_decl_auto = false;
 	bool		_acc_comp = false;
 	float		_bias_max = 0.0f;
+	int		_ext_hdg_mode = 0;
 
 	Vector<3>	_gyro;
 	Vector<3>	_accel;
@@ -150,10 +156,11 @@ private:
 	vehicle_global_position_s _gpos = {};
 	Vector<3>	_vel_prev;
 	Vector<3>	_pos_acc;
-	hrt_abstime _vel_prev_t = 0;
+	hrt_abstime 	_vel_prev_t = 0;
 
 	bool		_inited = false;
 	bool		_data_good = false;
+	bool		_ext_hdg_good = false;
 
 	perf_counter_t _update_perf;
 	perf_counter_t _loop_perf;
@@ -177,6 +184,7 @@ AttitudeEstimatorQ::AttitudeEstimatorQ() {
 	_params_handles.mag_decl_auto	= param_find("ATT_MAG_DECL_A");
 	_params_handles.acc_comp	= param_find("ATT_ACC_COMP");
 	_params_handles.bias_max	= param_find("ATT_BIAS_MAX");
+	_params_handles.ext_hdg_mode	= param_find("ATT_EXT_HDG_M");
 }
 
 /**
@@ -272,14 +280,14 @@ void AttitudeEstimatorQ::task_main() {
 
 		// Update vision and motion capture heading
 		bool vision_updated = false;
-		orb_check(vision_sub, &vision_updated);
+		orb_check(_vision_sub, &vision_updated);
 
 		bool mocap_updated = false;
-		orb_check(mocap_sub, &mocap_updated);
+		orb_check(_mocap_sub, &mocap_updated);
 
 		if (vision_updated) {
-			orb_copy(ORB_ID(vision_position_estimate), vision_sub, &vision);
-			math::Quaternion q(vision.q);
+			orb_copy(ORB_ID(vision_position_estimate), _vision_sub, &_vision);
+			math::Quaternion q(_vision.q);
 			
 			math::Matrix<3, 3> Rvis = q.to_dcm();
 			math::Vector<3> v(1.0f, 0.0f, 0.4f);
@@ -287,12 +295,13 @@ void AttitudeEstimatorQ::task_main() {
 			_vision_hdg = Rvis.transposed() * v; 	// Rvis is Rwr (robot respect to world) while v is respect to world. 
 								// Hence Rvis must be transposed having (Rwr)' * Vw
 								// Rrw * Vw = vn. This way we have consistency
-						
+			
+			_ext_hdg_good = _vision.timestamp_boot > 0 && (hrt_elapsed_time(&_vision.timestamp_boot) < 500000); // Check for timeouts on data
 		}
 
 		if (mocap_updated) {
-			orb_copy(ORB_ID(att_pos_mocap), mocap_sub, &mocap);
-			math::Quaternion q(mocap.q);
+			orb_copy(ORB_ID(att_pos_mocap), _mocap_sub, &_mocap);
+			math::Quaternion q(_mocap.q);
 			math::Matrix<3, 3> Rmoc = q.to_dcm();
 
 			math::Vector<3> v(1.0f, 0.0f, 0.4f);
@@ -300,6 +309,8 @@ void AttitudeEstimatorQ::task_main() {
 			_mocap_hdg = Rmoc.transposed() * v; 	// Rmoc is Rwr (robot respect to world) while v is respect to world.
 								// Hence Rmoc must be transposed having (Rwr)' * Vw
 								// Rrw * Vw = vn. This way we have consistency
+
+			_ext_hdg_good = _mocap.timestamp_boot > 0 && (hrt_elapsed_time(&_mocap.timestamp_boot) < 500000); // Check for timeouts on data
 		}
 
 		bool gpos_updated;
@@ -392,6 +403,7 @@ void AttitudeEstimatorQ::update_parameters(bool force) {
 
 		param_get(_params_handles.w_acc, &_w_accel);
 		param_get(_params_handles.w_mag, &_w_mag);
+		param_get(_params_handles.w_ext_hdg, &_w_ext_hdg);
 		param_get(_params_handles.w_gyro_bias, &_w_gyro_bias);
 		float mag_decl_deg = 0.0f;
 		param_get(_params_handles.mag_decl, &mag_decl_deg);
@@ -403,6 +415,7 @@ void AttitudeEstimatorQ::update_parameters(bool force) {
 		param_get(_params_handles.acc_comp, &acc_comp_int);
 		_acc_comp = acc_comp_int != 0;
 		param_get(_params_handles.bias_max, &_bias_max);
+		param_get(_params_handles.ext_hdg_mode, &_ext_hdg_mode);
 	}
 }
 
@@ -455,12 +468,30 @@ bool AttitudeEstimatorQ::update(float dt) {
 	// Angular rate of correction
 	Vector<3> corr;
 
+	if((_ext_hdg_mode == 1 || _ext_hdg_mode == 2) && _ext_hdg_good) {
+	// Vision heading correction
+	// Project heading to global frame and extract XY component
+	Vector<3> vision_hdg_earth = _q.conjugate(_vision_hdg);
+	float vision_hdg_err = _wrap_pi(atan2f(vision_hdg_earth(1), vision_hdg_earth(0)));
+	// Project correction to body frame
+	corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -vision_hdg_err)) * _w_ext_hdg;
+
+	// Mocap heading correction
+	// Project heading to global frame and extract XY component
+	Vector<3> mocap_hdg_earth = _q.conjugate(_mocap_hdg);
+	float mocap_hdg_err = _wrap_pi(atan2f(mocap_hdg_earth(1), mocap_hdg_earth(0)));
+	// Project correction to body frame
+	corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -mocap_hdg_err)) * _w_ext_hdg;
+	}
+
+	if((_ext_hdg_mode == 0 || _ext_hdg_mode == 2) || !_ext_hdg_good) {
 	// Magnetometer correction
 	// Project mag field vector to global frame and extract XY component
 	Vector<3> mag_earth = _q.conjugate(_mag);
 	float mag_err = _wrap_pi(atan2f(mag_earth(1), mag_earth(0)) - _mag_decl);
 	// Project magnetometer correction to body frame
 	corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -mag_err)) * _w_mag;
+	}
 
 	// Accelerometer correction
 	// Project 'k' unit vector of earth frame to body frame
