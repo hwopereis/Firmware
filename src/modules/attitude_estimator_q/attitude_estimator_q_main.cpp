@@ -154,12 +154,6 @@ private:
 	Vector<3>	_gyro;
 	Vector<3>	_accel;
 	Vector<3>	_mag;
-	
-	vision_position_estimate_s _vision = {};
-	Vector<3>	_vision_hdg;
-
-	att_pos_mocap_s _mocap = {};
-	Vector<3>	_mocap_hdg;
 
 	vision_position_estimate_s _vision = {};
 	Vector<3>	_vision_hdg;
@@ -487,41 +481,6 @@ void AttitudeEstimatorQ::task_main()
 			_ext_hdg_good = _mocap.timestamp_boot > 0 && (hrt_elapsed_time(&_mocap.timestamp_boot) < 500000);
 		}
 
-		// Update vision and motion capture heading
-		bool vision_updated = false;
-		orb_check(_vision_sub, &vision_updated);
-
-		bool mocap_updated = false;
-		orb_check(_mocap_sub, &mocap_updated);
-
-		if (vision_updated) {
-			orb_copy(ORB_ID(vision_position_estimate), _vision_sub, &_vision);
-			math::Quaternion q(_vision.q);
-			
-			math::Matrix<3, 3> Rvis = q.to_dcm();
-			math::Vector<3> v(1.0f, 0.0f, 0.4f);
-
-			_vision_hdg = Rvis.transposed() * v; 	// Rvis is Rwr (robot respect to world) while v is respect to world. 
-								// Hence Rvis must be transposed having (Rwr)' * Vw
-								// Rrw * Vw = vn. This way we have consistency
-			
-			_ext_hdg_good = _vision.timestamp_boot > 0 && (hrt_elapsed_time(&_vision.timestamp_boot) < 500000); // Check for timeouts on data
-		}
-
-		if (mocap_updated) {
-			orb_copy(ORB_ID(att_pos_mocap), _mocap_sub, &_mocap);
-			math::Quaternion q(_mocap.q);
-			math::Matrix<3, 3> Rmoc = q.to_dcm();
-
-			math::Vector<3> v(1.0f, 0.0f, 0.4f);
-
-			_mocap_hdg = Rmoc.transposed() * v; 	// Rmoc is Rwr (robot respect to world) while v is respect to world.
-								// Hence Rmoc must be transposed having (Rwr)' * Vw
-								// Rrw * Vw = vn. This way we have consistency
-
-			_ext_hdg_good = _mocap.timestamp_boot > 0 && (hrt_elapsed_time(&_mocap.timestamp_boot) < 500000); // Check for timeouts on data
-		}
-
 		bool gpos_updated;
 		orb_check(_global_pos_sub, &gpos_updated);
 
@@ -720,30 +679,33 @@ bool AttitudeEstimatorQ::update(float dt)
 	// Angular rate of correction
 	Vector<3> corr;
 
+	if (_ext_hdg_mode > 0 && _ext_hdg_good) {
+		if (_ext_hdg_mode == 1) {
+			// Vision heading correction
+			// Project heading to global frame and extract XY component
+			Vector<3> vision_hdg_earth = _q.conjugate(_vision_hdg);
+			float vision_hdg_err = _wrap_pi(atan2f(vision_hdg_earth(1), vision_hdg_earth(0)));
+			// Project correction to body frame
+			corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -vision_hdg_err)) * _w_ext_hdg;
+		}
 
-	if((_ext_hdg_mode == 1 || _ext_hdg_mode == 2) && _ext_hdg_good) {
-	// Vision heading correction
-	// Project heading to global frame and extract XY component
-	Vector<3> vision_hdg_earth = _q.conjugate(_vision_hdg);
-	float vision_hdg_err = _wrap_pi(atan2f(vision_hdg_earth(1), vision_hdg_earth(0)));
-	// Project correction to body frame
-	corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -vision_hdg_err)) * _w_ext_hdg;
-
-	// Mocap heading correction
-	// Project heading to global frame and extract XY component
-	Vector<3> mocap_hdg_earth = _q.conjugate(_mocap_hdg);
-	float mocap_hdg_err = _wrap_pi(atan2f(mocap_hdg_earth(1), mocap_hdg_earth(0)));
-	// Project correction to body frame
-	corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -mocap_hdg_err)) * _w_ext_hdg;
+		if (_ext_hdg_mode == 2) {
+			// Mocap heading correction
+			// Project heading to global frame and extract XY component
+			Vector<3> mocap_hdg_earth = _q.conjugate(_mocap_hdg);
+			float mocap_hdg_err = _wrap_pi(atan2f(mocap_hdg_earth(1), mocap_hdg_earth(0)));
+			// Project correction to body frame
+			corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -mocap_hdg_err)) * _w_ext_hdg;
+		}
 	}
 
-	if((_ext_hdg_mode == 0 || _ext_hdg_mode == 2) || !_ext_hdg_good) {
-	// Magnetometer correction
-	// Project mag field vector to global frame and extract XY component
-	Vector<3> mag_earth = _q.conjugate(_mag);
-	float mag_err = _wrap_pi(atan2f(mag_earth(1), mag_earth(0)) - _mag_decl);
-	// Project magnetometer correction to body frame
-	corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -mag_err)) * _w_mag;
+	if (_ext_hdg_mode == 0  || !_ext_hdg_good) {
+		// Magnetometer correction
+		// Project mag field vector to global frame and extract XY component
+		Vector<3> mag_earth = _q.conjugate(_mag);
+		float mag_err = _wrap_pi(atan2f(mag_earth(1), mag_earth(0)) - _mag_decl);
+		// Project magnetometer correction to body frame
+		corr += _q.conjugate_inversed(Vector<3>(0.0f, 0.0f, -mag_err)) * _w_mag;
 	}
 
 	// Accelerometer correction
