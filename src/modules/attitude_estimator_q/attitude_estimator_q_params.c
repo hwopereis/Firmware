@@ -47,6 +47,7 @@
  * @group Attitude Q estimator
  * @min 0
  * @max 1
+ * @decimal 2
  */
 PARAM_DEFINE_FLOAT(ATT_W_ACC, 0.2f);
 
@@ -56,6 +57,7 @@ PARAM_DEFINE_FLOAT(ATT_W_ACC, 0.2f);
  * @group Attitude Q estimator
  * @min 0
  * @max 1
+ * @decimal 2
  */
 PARAM_DEFINE_FLOAT(ATT_W_MAG, 0.1f);
 
@@ -74,6 +76,7 @@ PARAM_DEFINE_FLOAT(ATT_W_EXT_HDG, 0.1f);
  * @group Attitude Q estimator
  * @min 0
  * @max 1
+ * @decimal 2
  */
 PARAM_DEFINE_FLOAT(ATT_W_GYRO_BIAS, 0.1f);
 
@@ -86,6 +89,7 @@ PARAM_DEFINE_FLOAT(ATT_W_GYRO_BIAS, 0.1f);
  *
  * @group Attitude Q estimator
  * @unit degrees
+ * @decimal 2
  */
 PARAM_DEFINE_FLOAT(ATT_MAG_DECL, 0.0f);
 
@@ -99,9 +103,9 @@ PARAM_DEFINE_FLOAT(ATT_MAG_DECL, 0.0f);
 PARAM_DEFINE_INT32(ATT_MAG_DECL_A, 1);
 
 /**
- * External heading usage mode (from Mocap/Vision)
- * Set to 1 to just use external yaw.
- * Set to 2 to use magnetometer as well and have a valid global yaw.
+ * External heading usage mode (from Motion capture/Vision)
+ * Set to 1 to use heading estimate from vision.
+ * Set to 2 to use heading from motion capture.
  *
  * @group Attitude Q estimator
  * @min 0
@@ -126,5 +130,16 @@ PARAM_DEFINE_INT32(ATT_ACC_COMP, 2);
  * @min 0
  * @max 2
  * @unit rad/s
+ * @decimal 3
  */
 PARAM_DEFINE_FLOAT(ATT_BIAS_MAX, 0.05f);
+
+/**
+ * Threshold (of RMS) to warn about high vibration levels
+ *
+ * @group Attitude Q estimator
+ * @min 0.01
+ * @max 10
+ * @decimal 2
+ */
+PARAM_DEFINE_FLOAT(ATT_VIBE_THRESH, 0.2f);

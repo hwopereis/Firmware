@@ -45,6 +45,7 @@ class Parameter(object):
         "min": 5,
         "max": 4,
         "unit": 3,
+        "decimal": 2,
         # all others == 0 (sorted alphabetically)
     }
 
@@ -106,7 +107,7 @@ class SourceParser(object):
     re_remove_dots = re.compile(r'\.+$')
     re_remove_carriage_return = re.compile('\n+')
 
-    valid_tags = set(["group", "board", "min", "max", "unit"])
+    valid_tags = set(["group", "board", "min", "max", "unit", "decimal"])
 
     # Order of parameter groups
     priority = {
@@ -200,7 +201,7 @@ class SourceParser(object):
                     m = self.re_px4_parameter_definition.match(line)
                     if m:
                         tp, name = m.group(1, 2)
-                        if default_var.has_key(name+'_DEFAULT'):
+                        if (name+'_DEFAULT') in default_var:
                             defval = default_var[name+'_DEFAULT']
                 if tp is not None:
                     # Remove trailing type specifier from numbers: 0.1f => 0.1
